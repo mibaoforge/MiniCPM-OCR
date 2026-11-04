@@ -322,6 +322,22 @@ function ocrResponse(
   };
 }
 
+/** A public http page is not a secure context, so crypto.randomUUID throws there (same guard as demoStore). */
+function demoLocalId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    try {
+      return cryptoApi.randomUUID().replace(/-/g, '');
+    } catch {
+      // fall through to the getRandomValues id below
+    }
+  }
+  const bytes = new Uint8Array(16);
+  if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') cryptoApi.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -366,7 +382,7 @@ async function createKieJob(body: Record<string, unknown>): Promise<DemoJob> {
     throw new Error('imageParseInvalidResult');
   }
   return {
-    id: crypto.randomUUID().replace(/-/g, ''),
+    id: demoLocalId(),
     task: 'kie',
     status: 'Success',
     pages_done: 1,
