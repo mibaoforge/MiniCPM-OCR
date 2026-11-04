@@ -192,37 +192,59 @@ function wordBlocks(
  * @param markdown current body at the moment of download; formulas keep LaTeX, and remote images are not requested automatically
  * @returns a Word file that can be handed straight to the browser to download
  */
+export interface WordExportPage {
+  markdown: string;
+  crops?: readonly string[];
+}
+
 export async function createImageParseWordBlob(markdown: string, crops: readonly string[] = []): Promise<Blob> {
-  const tree = PARSER.parse(normalizeMathDelimiters(markdown, { detectBareMath: false })) as Root;
-  const definitions = tree.children.filter(
-    (node): node is FootnoteDefinition => node.type === 'footnoteDefinition',
-  );
-  const images = crops.length ? await loadWordImages(crops) : undefined;
-  const context: WordContext = {
-    definitions: new Map(
-      tree.children
-        .filter((node): node is Definition => node.type === 'definition')
-        .map((node) => [node.identifier, node]),
-    ),
-    numbering: [],
-    footnoteIds: new Map(definitions.map((node, index) => [node.identifier, index + 1])),
-    images,
-    imageCursor: { index: 0 },
-  };
-  const children = wordBlocks(tree.children, context);
-  const footnotes = Object.fromEntries(
-    definitions.map((node) => [
-      context.footnoteIds.get(node.identifier)!,
-      {
-        children: wordBlocks(node.children, context).filter(
-          (block): block is Paragraph => block instanceof Paragraph,
-        ),
-      },
-    ]),
-  );
+  return createImageParseWordBlobPages([{ markdown, crops }]);
+}
+
+/** Build one document with a section per page; every page keeps its own image pairing and footnote numbering restarts per document, not per page. */
+export async function createImageParseWordBlobPages(pages: readonly WordExportPage[]): Promise<Blob> {
+  const contexts: WordContext[] = [];
+  const sectionChildren: Array<Array<Paragraph | Table>> = [];
+  const footnoteEntries: Array<[number, { children: Paragraph[] }]> = [];
+  let footnoteBase = 0;
+  for (const page of pages.length ? pages : [{ markdown: '' }]) {
+    const tree = PARSER.parse(normalizeMathDelimiters(page.markdown, { detectBareMath: false })) as Root;
+    const definitions = tree.children.filter(
+      (node): node is FootnoteDefinition => node.type === 'footnoteDefinition',
+    );
+    const images = page.crops?.length ? await loadWordImages(page.crops) : undefined;
+    const context: WordContext = {
+      definitions: new Map(
+        tree.children
+          .filter((node): node is Definition => node.type === 'definition')
+          .map((node) => [node.identifier, node]),
+      ),
+      numbering: [],
+      footnoteIds: new Map(
+        definitions.map((node, index) => [node.identifier, footnoteBase + index + 1]),
+      ),
+      images,
+      imageCursor: { index: 0 },
+    };
+    footnoteBase += definitions.length;
+    const children = wordBlocks(tree.children, context);
+    for (const node of definitions) {
+      footnoteEntries.push([
+        context.footnoteIds.get(node.identifier)!,
+        {
+          children: wordBlocks(node.children, context).filter(
+            (block): block is Paragraph => block instanceof Paragraph,
+          ),
+        },
+      ]);
+    }
+    contexts.push(context);
+    sectionChildren.push(children);
+  }
+  const footnotes = Object.fromEntries(footnoteEntries);
   const document = new Document({
     creator: 'MAP',
-    numbering: { config: context.numbering },
+    numbering: { config: contexts.flatMap((one) => one.numbering) },
     footnotes,
     styles: {
       default: {
@@ -232,17 +254,15 @@ export async function createImageParseWordBlob(markdown: string, crops: readonly
         },
       },
     },
-    sections: [
-      {
-        properties: {
-          page: {
-            size: { width: 11906, height: 16838 },
-            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
-          },
+    sections: sectionChildren.map((children) => ({
+      properties: {
+        page: {
+          size: { width: 11906, height: 16838 },
+          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
         },
-        children: children.length ? children : [new Paragraph('')],
       },
-    ],
+      children: children.length ? children : [new Paragraph('')],
+    })),
   });
   return Packer.toBlob(document);
 }

@@ -181,6 +181,94 @@ function blockSpec(
   return { x, y, w, h, lines: fit.lines, fontSize: Math.min(fit.fontSize, h * 0.9) };
 }
 
+export interface ImageParseHtmlPageInput {
+  page: number;
+  blocks: readonly ImageParseLayoutBlock[];
+  rotation?: ImageParseRotationInfo;
+}
+
+/** One file for a whole PDF: every completed page keeps its own raster + overlay stage, one shared toggle. */
+export async function createImageParseMultiPageHtmlDocument(
+  pdfSource: string,
+  pages: readonly ImageParseHtmlPageInput[],
+  name?: string,
+): Promise<string> {
+  if (typeof document === 'undefined') return wrapHtml(escapeHtml(name || 'MiniCPM-OCR'), '<p class="empty">（無辨識結果）</p>', false);
+  const { loadPdfPreview } = await import('./pdfPreview');
+  const { renderPdfPageImage } = await import('./pdfPageImage');
+  const task = loadPdfPreview(pdfSource);
+  const stages: string[] = [];
+  try {
+    const pdf = await task.promise;
+    for (const page of pages) {
+      let pageImage: string | undefined;
+      try {
+        pageImage = await renderPdfPageImage(pdf, page.page, new AbortController().signal);
+      } catch {
+        pageImage = undefined;
+      }
+      const stage = await buildStage(page.blocks, pageImage, page.rotation);
+      stages.push(
+        stage
+          ? `<section class="page"><h2>第 ${page.page} 頁</h2>${stage}</section>`
+          : `<section class="page"><h2>第 ${page.page} 頁</h2><p class="empty">（頁面圖像不可用）</p></section>`,
+      );
+    }
+  } finally {
+    void task.destroy().catch(() => undefined);
+  }
+  const title = escapeHtml(name ? `${name} · 全 ${pages.length} 頁` : `MiniCPM-OCR 版面還原 · 全 ${pages.length} 頁`);
+  return wrapHtml(title, stages.join('\n'), true, true);
+}
+
+/** Render one page stage: raster background + overlaid text blocks; returns undefined when the raster is unusable. */
+async function buildStage(
+  blocks: readonly ImageParseLayoutBlock[],
+  pageImage: string | undefined,
+  rotation?: ImageParseRotationInfo,
+): Promise<string | undefined> {
+  if (!pageImage) return undefined;
+  const isDataUrl = /^data:image\/[^;,]+;base64,/.test(pageImage);
+  const angle = rotationAngle(rotation);
+  const rotated = isDataUrl ? await rotateDataUrl(pageImage, angle) : pageImage;
+  let size = isDataUrl ? readImageSize(dataUrlBytes(rotated)) : null;
+  if (!size) {
+    const probe = await loadImage(rotated);
+    if (probe?.naturalWidth) size = { width: probe.naturalWidth, height: probe.naturalHeight };
+  }
+  if (!size) return undefined;
+  const specs = blocks
+    .map((block) => blockSpec(block, size!.width, size!.height))
+    .filter((spec): spec is TextBlockSpec => spec !== null && spec.fontSize >= 4);
+  const overlay = specs
+    .map((spec) => {
+      const lineHeight = (spec.h - spec.fontSize) / Math.max(1, spec.lines.length - 1);
+      const rows = spec.lines
+        .map((line, index) => {
+          const x = spec.x + 1;
+          const y = spec.y + spec.fontSize * 0.95 + index * lineHeight;
+          const trimmed = line.trim();
+          const wpx = Math.min(spec.w, lineWidthUnits(trimmed) * spec.fontSize + 3);
+          const rect = `  <rect class="bg" x="${(x - 1.5).toFixed(1)}" y="${(
+            y - spec.fontSize
+          ).toFixed(1)}" width="${wpx.toFixed(1)}" height="${(spec.fontSize * 1.18).toFixed(1)}"/>`;
+          const text = `  <text x="${x.toFixed(1)}" y="${y.toFixed(
+            1
+          )}" font-size="${spec.fontSize.toFixed(1)}">${escapeHtml(trimmed)}</text>`;
+          return `${rect}\n${text}`;
+        })
+        .join('\n');
+      return `<g>\n${rows}\n</g>`;
+    })
+    .join('\n');
+  return `<svg viewBox="0 0 ${size.width} ${size.height}" xmlns="http://www.w3.org/2000/svg" role="img">
+<image href="${rotated}" x="0" y="0" width="${size.width}" height="${size.height}"/>
+<g class="textLayer">
+${overlay}
+</g>
+</svg>`;
+}
+
 export async function createImageParseHtmlDocument(input: ImageParseHtmlInput): Promise<string> {
   let pageImage = input.pageImage;
   if (!pageImage && input.pdfSource && typeof document !== 'undefined') {
@@ -211,37 +299,8 @@ export async function createImageParseHtmlDocument(input: ImageParseHtmlInput): 
   const title = escapeHtml(titleParts.join(' · ') || 'MiniCPM-OCR 版面還原');
 
   if (rotated && size) {
-    const specs = input.blocks
-      .map((block) => blockSpec(block, size.width, size.height))
-      .filter((spec): spec is TextBlockSpec => spec !== null && spec.fontSize >= 4);
-    const overlay = specs
-      .map((spec) => {
-        const lineHeight = (spec.h - spec.fontSize) / Math.max(1, spec.lines.length - 1);
-        const rows = spec.lines
-          .map((line, index) => {
-            const x = spec.x + 1;
-            const y = spec.y + spec.fontSize * 0.95 + index * lineHeight;
-            const trimmed = line.trim();
-            const wpx = Math.min(spec.w, lineWidthUnits(trimmed) * spec.fontSize + 3);
-            const rect = `  <rect class="bg" x="${(x - 1.5).toFixed(1)}" y="${(
-              y - spec.fontSize
-            ).toFixed(1)}" width="${wpx.toFixed(1)}" height="${(spec.fontSize * 1.18).toFixed(1)}"/>`;
-            const text = `  <text x="${x.toFixed(1)}" y="${y.toFixed(
-              1
-            )}" font-size="${spec.fontSize.toFixed(1)}">${escapeHtml(trimmed)}</text>`;
-            return `${rect}\n${text}`;
-          })
-          .join('\n');
-        return `<g>\n${rows}\n</g>`;
-      })
-      .join('\n');
-    const stage = `<svg viewBox="0 0 ${size.width} ${size.height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${title}">
-<image href="${rotated}" x="0" y="0" width="${size.width}" height="${size.height}"/>
-<g class="textLayer">
-${overlay}
-</g>
-</svg>`;
-    return wrapHtml(title, stage, true);
+    const stage = await buildStage(input.blocks, rotated, input.rotation);
+    if (stage) return wrapHtml(title, stage, true);
   }
   const fallback = input.blocks
     .filter((block) => !IMAGE_KINDS.has(block.kind) && block.text.trim())
@@ -250,7 +309,7 @@ ${overlay}
   return wrapHtml(title, fallback || '<p class="empty">（無辨識結果）</p>', false);
 }
 
-function wrapHtml(title: string, body: string, hasLayout: boolean): string {
+function wrapHtml(title: string, body: string, hasLayout: boolean, multi = false): string {
   const toggle = hasLayout
     ? '<input type="checkbox" id="showText"><label class="bar" for="showText">顯示辨識文字（白底覆蓋原文；未勾選時文字層隱形但仍可框選複製）</label>'
     : '';
@@ -273,6 +332,8 @@ function wrapHtml(title: string, body: string, hasLayout: boolean): string {
   .stage { position: relative; }
   p { white-space: pre-wrap; line-height: 1.7; font-size: 14px; }
   .empty { color: #94a3b8; }
+  section.page { margin-top: 22px; }
+  section.page h2 { font-size: 13px; color: #64748b; margin: 0 0 8px; }
 </style>
 </head>
 <body>

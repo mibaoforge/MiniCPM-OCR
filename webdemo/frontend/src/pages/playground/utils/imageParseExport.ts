@@ -15,6 +15,14 @@ export interface ImageParseExportInput {
   /** PDF source URL and 1-based page for the layout HTML export (document mode). */
   pdfSource?: string;
   pageIndex?: number;
+  /** All completed PDF pages (document mode); Word/HTML exports cover them in one file when present. */
+  pdfPages?: Array<{
+    page: number;
+    markdown: string;
+    blocks: ImageParseExportInput['blocks'];
+    rotation?: ImageParseExportInput['rotation'];
+    crops?: readonly string[];
+  }>;
   markdown: string;
   blocks: readonly ImageParseLayoutBlock[];
   rotation?: ImageParseRotationInfo;
@@ -56,6 +64,19 @@ export async function createImageParseExport(
   input: ImageParseExportInput,
 ): Promise<Blob> {
   if (format === 'html') {
+    if (input.pdfPages && input.pdfPages.length > 1 && input.pdfSource) {
+      const { createImageParseMultiPageHtmlDocument } = await import('./imageParseHtml');
+      const html = await createImageParseMultiPageHtmlDocument(
+        input.pdfSource,
+        input.pdfPages.map((page) => ({
+          page: page.page,
+          blocks: page.blocks,
+          rotation: page.rotation,
+        })),
+        (input as { name?: string }).name,
+      );
+      return new Blob([html], { type: 'text/html;charset=utf-8' });
+    }
     const { createImageParseHtmlDocument } = await import('./imageParseHtml');
     const html = await createImageParseHtmlDocument({
       blocks: input.blocks,
@@ -69,7 +90,28 @@ export async function createImageParseExport(
     return new Blob([html], { type: 'text/html;charset=utf-8' });
   }
   if (format === 'word') {
-    const { createImageParseWordBlob } = await import('./imageParseWord');
+    const { createImageParseWordBlob, createImageParseWordBlobPages } = await import('./imageParseWord');
+    if (input.pdfPages && input.pdfPages.length > 1) {
+      const pages = [];
+      for (const page of input.pdfPages) {
+        let crops = page.crops;
+        if ((!crops || !crops.length) && input.pdfSource) {
+          try {
+            const { rebuildPdfPageCrops } = await import('./pdfImageParseCrops');
+            crops = await rebuildPdfPageCrops(
+              input.pdfSource,
+              page.page,
+              { markdown: page.markdown, blocks: page.blocks, ...(page.rotation ? { rotation: page.rotation } : {}) },
+              new AbortController().signal,
+            );
+          } catch {
+            crops = [];
+          }
+        }
+        pages.push({ markdown: page.markdown, crops });
+      }
+      return createImageParseWordBlobPages(pages);
+    }
     return createImageParseWordBlob(input.markdown, input.crops ?? []);
   }
   if (format === 'markdown')

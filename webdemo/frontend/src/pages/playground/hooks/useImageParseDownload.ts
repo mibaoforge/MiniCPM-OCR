@@ -34,7 +34,8 @@ export function useImageParseDownload(input: ImageParseDownloadInput) {
     setDownloading(true);
     try {
       const blob = await createImageParseExport(format, input);
-      saveImageParseExport(blob, imageParseExportFileName(input.name, format, input.page));
+      const wholeFile = Boolean(input.pdfPages && input.pdfPages.length > 1) && (format === 'word' || format === 'html');
+      saveImageParseExport(blob, imageParseExportFileName(input.name, format, wholeFile ? undefined : input.page));
     } catch {
       toast({ title: t('imageParseDownloadFailed'), variant: 'error' });
     } finally {
