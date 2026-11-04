@@ -43,6 +43,24 @@
 - **[2026.10.29]** [SDK 1.0.3](https://pypi.org/project/minicpm-ocr/1.0.3/): Markdown output preserves text recognized in image regions and includes links to the corresponding cropped images. The [Skill](https://github.com/OpenBMB/MiniCPM-OCR/blob/main/README.md#skill) now includes an Ollama deployment guide.
 - 🚀🚀🚀 **[2026.10.27] MiniCPM-OCR 1.0 and MiniCPM-OCR Jev are now open source!** Get started with the [model weights](https://github.com/OpenBMB/MiniCPM-OCR/blob/main/README.md#model-weights), the [pip SDK](https://pypi.org/project/minicpm-ocr/), the [Skill](https://github.com/OpenBMB/MiniCPM-OCR/blob/main/README.md#skill), and a [free API](https://github.com/OpenBMB/MiniCPM-OCR/blob/main/README.md#api).
 
+## Fork Notes (mibaoforge)
+
+This fork keeps upstream MiniCPM-OCR unchanged and adds Web Demo export improvements built for a self-hosted deployment (llama.cpp backend):
+
+- **Word export embeds cropped images** - upstream intentionally exports image regions as alt text only; this fork embeds the actual crops (PNG/JPEG, auto-resized to page width) into the .docx via `ImageRun`. When the draft has been manually edited, exports fall back to alt text to avoid image/text misalignment.
+- **Layout-preserved HTML export** - a new export format that reconstructs each page as an SVG overlay (page raster + positioned text lines) so reading order and layout stay visually faithful.
+- **Whole-document exports** - Word/HTML/Markdown exports now cover every completed page of a PDF in a single file; Markdown export embeds images as data URIs.
+- **KIE fix on plain-HTTP origins** - `crypto.randomUUID` is unavailable outside secure contexts; a fallback keeps key information extraction working when the demo is self-hosted over plain http.
+
+### Verification (2026-11-04)
+
+- `tsc --noEmit` and `pnpm build` pass on the rebased tree.
+- Headless module tests (esbuild bundle; the repo ships no test runner):
+  - Word + crops: `word/media/*.png` present and `<w:drawing>` in `document.xml`.
+  - Word with empty crops: no media entries, alt text preserved (upstream behavior regression).
+  - Multi-page Word: one file containing all pages with embedded media.
+- Multi-page HTML export renders page rasters via the browser DOM; the Node-side fallback path was verified separately.
+
 ## MiniCPM-OCR 1.0
 
 **MiniCPM-OCR 1.0** (1.3B) is the first OCR-specific model in the [MiniCPM-V/o](https://github.com/openbmb/MiniCPM-V) family. It focuses on text-centric document understanding, covering text, tables, formulas, charts, seals, and structured information extraction. Its key features include:

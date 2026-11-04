@@ -43,6 +43,24 @@
 - **[2026.10.29]** [SDK 1.0.3](https://pypi.org/project/minicpm-ocr/1.0.3/) 发布：Markdown 输出保留图片区域的识别文字，并附上对应裁图的链接；[Skill](https://github.com/OpenBMB/MiniCPM-OCR/blob/main/README_zh.md#skill) 新增 Ollama 部署指南。
 - 🚀🚀🚀 **[2026.10.27] MiniCPM-OCR 1.0 与 MiniCPM-OCR Jev 正式发布并开源！** 同步提供[模型权重](https://github.com/OpenBMB/MiniCPM-OCR/blob/main/README_zh.md#model-weights)、[pip SDK](https://pypi.org/project/minicpm-ocr/)、[Skill](https://github.com/OpenBMB/MiniCPM-OCR/blob/main/README_zh.md#skill) 和[免费 API](https://github.com/OpenBMB/MiniCPM-OCR/blob/main/README_zh.md#api)。
 
+## 分支說明（mibaoforge）
+
+本分支不改动上游 MiniCPM-OCR 核心，僅為自架部署（llama.cpp 後端）強化 Web Demo 的匯出功能：
+
+- **Word 匯出嵌入裁切圖片**：上游刻意只輸出圖片 alt 文字；本分支以 `ImageRun` 將實際裁圖（PNG/JPEG，自動等比縮至頁寬）嵌入 .docx。草稿經手動編輯時退回 alt 文字，避免圖文錯位。
+- **版面還原 HTML 匯出**：新增匯出格式，將每頁重建為 SVG 疊層（頁面光柵圖 + 定位文字），保留閱讀順序與版面位置。
+- **整份文件匯出**：Word/HTML/Markdown 匯出改為單檔涵蓋 PDF 全部已完成頁面；Markdown 匯出以 data URI 嵌入圖片。
+- **純 HTTP 來源的 KIE 修復**：非安全內容下 `crypto.randomUUID` 不可用，加入備援後自架 http 環境可正常進行關鍵資訊擷取。
+
+### 驗證結果（2026-11-04）
+
+- 於 rebase 後的程式樹執行 `tsc --noEmit` 與 `pnpm build`，皆通過。
+- 無測試框架下的 headless 模組直測（esbuild bundle）：
+  - Word 含裁圖：`word/media/*.png` 存在且 `document.xml` 含 `<w:drawing>`。
+  - Word 無裁圖：無 media 條目、保留 alt 文字（上游行為回歸）。
+  - 多頁 Word：單檔涵蓋全部頁面並嵌入圖片。
+- 多頁 HTML 匯出的頁面光柵需瀏覽器 DOM 渲染，Node 端退回路徑已另行驗證。
+
 ## MiniCPM-OCR 1.0
 
 **MiniCPM-OCR 1.0** (1.3B) 是 [MiniCPM-V/o](https://github.com/openbmb/MiniCPM-V) 家族首个 OCR 专用模型，面向以文字为中心的文档理解，覆盖文本、表格、公式、图表与印章识别和结构化信息抽取。主要特点包括：
