@@ -52,6 +52,8 @@ This fork keeps upstream MiniCPM-OCR unchanged and adds Web Demo export improvem
 - **Whole-document exports** - Word/HTML/Markdown exports now cover every completed page of a PDF in a single file; Markdown export embeds images as data URIs.
 - **KIE fix on plain-HTTP origins** - `crypto.randomUUID` is unavailable outside secure contexts; a fallback keeps key information extraction working when the demo is self-hosted over plain http.
 
+Full feature walkthrough: [Web Demo Features (EN)](./docs/webdemo_features_en.md) / [中文](./docs/webdemo_features_zh.md)
+
 ### Verification (2026-11-04)
 
 - `tsc --noEmit` and `pnpm build` pass on the rebased tree.

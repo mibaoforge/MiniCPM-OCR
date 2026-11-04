@@ -52,6 +52,8 @@
 - **整份文件匯出**：Word/HTML/Markdown 匯出改為單檔涵蓋 PDF 全部已完成頁面；Markdown 匯出以 data URI 嵌入圖片。
 - **純 HTTP 來源的 KIE 修復**：非安全內容下 `crypto.randomUUID` 不可用，加入備援後自架 http 環境可正常進行關鍵資訊擷取。
 
+完整功能說明：[Web Demo 功能總覽（中文）](./docs/webdemo_features_zh.md) / [English](./docs/webdemo_features_en.md)
+
 ### 驗證結果（2026-11-04）
 
 - 於 rebase 後的程式樹執行 `tsc --noEmit` 與 `pnpm build`，皆通過。
