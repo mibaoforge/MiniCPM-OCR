@@ -53,6 +53,39 @@ export function imageParseExportFileName(
   return `${base}${page ? `-page-${page}` : ''}.${EXTENSIONS[format]}`;
 }
 
+/** Replace body `![image]()` placeholders with crops in order (data URLs render anywhere). */
+function embedImages(markdown: string, crops: readonly string[]): string {
+  let index = 0;
+  return markdown.replace(/!\[image\]\(\)/g, () => {
+    const crop = crops[index++];
+    return crop ? `![image](${crop})` : '![image]()';
+  });
+}
+
+/** Per-page markdown with crops; untouched pages rebuild crops from the local PDF at export time. */
+async function resolveExportPageCrops(input: ImageParseExportInput): Promise<Array<{ page: number; markdown: string; crops: readonly string[] }>> {
+  const pages = input.pdfPages ?? [];
+  const out: Array<{ page: number; markdown: string; crops: readonly string[] }> = [];
+  for (const page of pages) {
+    let crops = page.crops ?? [];
+    if (!crops.length && input.pdfSource && /!\[image\]\(\)/.test(page.markdown)) {
+      try {
+        const { rebuildPdfPageCrops } = await import('./pdfImageParseCrops');
+        crops = await rebuildPdfPageCrops(
+          input.pdfSource,
+          page.page,
+          { markdown: page.markdown, blocks: page.blocks, ...(page.rotation ? { rotation: page.rotation } : {}) },
+          new AbortController().signal,
+        );
+      } catch {
+        crops = [];
+      }
+    }
+    out.push({ page: page.page, markdown: page.markdown, crops });
+  }
+  return out;
+}
+
 /**
  * Create download content; Word is loaded on demand, and JSON rebuilds only the layout fields that are allowed to be exported.
  * @param format format the user selected
@@ -93,29 +126,24 @@ export async function createImageParseExport(
     const { createImageParseWordBlob, createImageParseWordBlobPages } = await import('./imageParseWord');
     if (input.pdfPages && input.pdfPages.length > 1) {
       const pages = [];
-      for (const page of input.pdfPages) {
-        let crops = page.crops;
-        if ((!crops || !crops.length) && input.pdfSource) {
-          try {
-            const { rebuildPdfPageCrops } = await import('./pdfImageParseCrops');
-            crops = await rebuildPdfPageCrops(
-              input.pdfSource,
-              page.page,
-              { markdown: page.markdown, blocks: page.blocks, ...(page.rotation ? { rotation: page.rotation } : {}) },
-              new AbortController().signal,
-            );
-          } catch {
-            crops = [];
-          }
-        }
-        pages.push({ markdown: page.markdown, crops });
+      for (const page of await resolveExportPageCrops(input)) {
+        pages.push({ markdown: page.markdown, crops: page.crops });
       }
       return createImageParseWordBlobPages(pages);
     }
     return createImageParseWordBlob(input.markdown, input.crops ?? []);
   }
-  if (format === 'markdown')
-    return new Blob([input.markdown], { type: 'text/markdown;charset=utf-8' });
+  if (format === 'markdown') {
+    if (input.pdfPages && input.pdfPages.length > 1) {
+      const pages = await resolveExportPageCrops(input);
+      const joined = pages
+        .map((page) => (pages.length > 1 && page.page > 1 ? `\n\n---\n\n<!-- 第 ${page.page} 頁 -->\n\n` : '') + embedImages(page.markdown, page.crops))
+        .join('')
+        .replace(/^\n+/, '');
+      return new Blob([joined], { type: 'text/markdown;charset=utf-8' });
+    }
+    return new Blob([embedImages(input.markdown, input.crops ?? [])], { type: 'text/markdown;charset=utf-8' });
+  }
 
   const blocks = input.blocks.map((block, index) => {
     const range = input.ranges?.get(imageParseBlockId(block, index));
