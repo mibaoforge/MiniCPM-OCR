@@ -2,6 +2,7 @@ import {
   Document,
   FootnoteReferenceRun,
   HeadingLevel,
+  ImageRun,
   LevelFormat,
   Packer,
   Paragraph,
@@ -10,6 +11,7 @@ import {
   type ExternalHyperlink,
   type IRunOptions,
 } from 'docx';
+import { loadWordImages, wordImageTransform, type WordImageData } from './imageParseWordImages';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkParse from 'remark-parse';
@@ -40,6 +42,24 @@ interface WordContext {
   definitions: Map<string, Definition>;
   numbering: ImageParseWordNumbering;
   footnoteIds: Map<string, number>;
+  /** Crop images keyed by their order of appearance in the markdown; missing entries stay text. */
+  images?: Array<WordImageData | null>;
+  imageCursor?: { index: number };
+}
+
+/** Inline image node -> embedded run when the crop is available, text fallback otherwise. */
+function imageRuns(node: { alt?: string | null }, context: WordContext, style: IRunOptions) {
+  const image = context.images?.[context.imageCursor?.index ?? -1] ?? null;
+  if (context.imageCursor) context.imageCursor.index += 1;
+  if (!image) return textRuns(node.alt || '[image]', style);
+  return [
+    new ImageRun({
+      type: 'png',
+      data: image.bytes,
+      transformation: wordImageTransform(image.width, image.height),
+      altText: { title: node.alt || 'image', description: node.alt || 'image', name: 'image' },
+    }),
+  ];
 }
 
 function textRuns(text: string, style: IRunOptions = {}): TextRun[] {
@@ -52,11 +72,11 @@ function inlineRuns(
   nodes: readonly PhrasingContent[],
   context: WordContext,
   style: IRunOptions = {},
-): Array<TextRun | ExternalHyperlink | FootnoteReferenceRun> {
-  return nodes.flatMap((node): Array<TextRun | ExternalHyperlink | FootnoteReferenceRun> => {
+): Array<TextRun | ExternalHyperlink | FootnoteReferenceRun | ImageRun> {
+  return nodes.flatMap((node): Array<TextRun | ExternalHyperlink | FootnoteReferenceRun | ImageRun> => {
     if (node.type === 'break') return [new TextRun({ break: 1 })];
     if (node.type === 'image' || node.type === 'imageReference')
-      return textRuns(node.alt || '[image]', style);
+      return imageRuns(node, context, style);
     if (node.type === 'html') return imageParseHtmlWordRuns(node.value, style);
     if (node.type === 'footnoteReference') {
       const id = context.footnoteIds.get(node.identifier);
@@ -172,11 +192,12 @@ function wordBlocks(
  * @param markdown current body at the moment of download; formulas keep LaTeX, and remote images are not requested automatically
  * @returns a Word file that can be handed straight to the browser to download
  */
-export async function createImageParseWordBlob(markdown: string): Promise<Blob> {
+export async function createImageParseWordBlob(markdown: string, crops: readonly string[] = []): Promise<Blob> {
   const tree = PARSER.parse(normalizeMathDelimiters(markdown, { detectBareMath: false })) as Root;
   const definitions = tree.children.filter(
     (node): node is FootnoteDefinition => node.type === 'footnoteDefinition',
   );
+  const images = crops.length ? await loadWordImages(crops) : undefined;
   const context: WordContext = {
     definitions: new Map(
       tree.children
@@ -185,6 +206,8 @@ export async function createImageParseWordBlob(markdown: string): Promise<Blob> 
     ),
     numbering: [],
     footnoteIds: new Map(definitions.map((node, index) => [node.identifier, index + 1])),
+    images,
+    imageCursor: { index: 0 },
   };
   const children = wordBlocks(tree.children, context);
   const footnotes = Object.fromEntries(

@@ -1,4 +1,4 @@
-import { Download, FileJson, FileText, FileType2, Loader2 } from 'lucide-react';
+import { Download, FileCode, FileJson, FileText, FileType2, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -28,6 +28,7 @@ const FORMATS = [
   { format: 'markdown', label: 'Markdown', extension: '.md', icon: FileText },
   { format: 'json', label: 'JSON', extension: '.json', icon: FileJson },
   { format: 'word', label: 'Word', extension: '.docx', icon: FileType2 },
+  { format: 'html', label: 'HTML 版面', extension: '.html', icon: FileCode },
 ] as const;
 
 /**

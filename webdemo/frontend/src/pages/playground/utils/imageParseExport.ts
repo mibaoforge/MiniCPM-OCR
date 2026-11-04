@@ -4,10 +4,17 @@ import type { ImageParseLayoutBlock } from './imageParseSample';
 import type { ImageParseRotationInfo } from './imageParseSample';
 
 /** Download formats supported for the current OCR result. */
-export type ImageParseDownloadFormat = 'markdown' | 'json' | 'word';
+export type ImageParseDownloadFormat = 'markdown' | 'json' | 'word' | 'html';
 
 /** A download snapshot does not accept a source token, API Key, or the raw request, so credentials do not enter the exported file. */
 export interface ImageParseExportInput {
+  /** Crop data/blob URLs aligned with the markdown image order (Word embed only). */
+  crops?: readonly string[];
+  /** Page raster data URL for the layout HTML export (single-image mode). */
+  pageImage?: string;
+  /** PDF source URL and 1-based page for the layout HTML export (document mode). */
+  pdfSource?: string;
+  pageIndex?: number;
   markdown: string;
   blocks: readonly ImageParseLayoutBlock[];
   rotation?: ImageParseRotationInfo;
@@ -19,6 +26,7 @@ const EXTENSIONS: Record<ImageParseDownloadFormat, string> = {
   markdown: 'md',
   json: 'json',
   word: 'docx',
+  html: 'html',
 };
 
 /**
@@ -47,9 +55,22 @@ export async function createImageParseExport(
   format: ImageParseDownloadFormat,
   input: ImageParseExportInput,
 ): Promise<Blob> {
+  if (format === 'html') {
+    const { createImageParseHtmlDocument } = await import('./imageParseHtml');
+    const html = await createImageParseHtmlDocument({
+      blocks: input.blocks,
+      rotation: input.rotation,
+      pageImage: input.pageImage,
+      pdfSource: input.pdfSource,
+      pageIndex: input.pageIndex,
+      name: (input as { name?: string }).name,
+      page: (input as { page?: number }).page,
+    });
+    return new Blob([html], { type: 'text/html;charset=utf-8' });
+  }
   if (format === 'word') {
     const { createImageParseWordBlob } = await import('./imageParseWord');
-    return createImageParseWordBlob(input.markdown);
+    return createImageParseWordBlob(input.markdown, input.crops ?? []);
   }
   if (format === 'markdown')
     return new Blob([input.markdown], { type: 'text/markdown;charset=utf-8' });
